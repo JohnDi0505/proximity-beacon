@@ -1,57 +1,60 @@
-package com.example.bluetoothscanner;
+package com.example.eddystonebeaconscanner;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
-import android.content.BroadcastReceiver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
+import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import android.os.Environment;
 import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.FileWriter;
-import java.io.IOException;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.nearby.Nearby;
+import com.google.android.gms.nearby.messages.BleSignal;
+import com.google.android.gms.nearby.messages.Distance;
+import com.google.android.gms.nearby.messages.EddystoneUid;
+import com.google.android.gms.nearby.messages.Message;
+import com.google.android.gms.nearby.messages.MessageFilter;
+import com.google.android.gms.nearby.messages.MessageListener;
+import com.google.android.gms.nearby.messages.MessagesClient;
+import com.google.android.gms.nearby.messages.MessagesOptions;
+import com.google.android.gms.nearby.messages.NearbyPermissions;
+import com.google.android.gms.nearby.messages.Strategy;
+import com.google.android.gms.nearby.messages.SubscribeOptions;
+
+import java.lang.reflect.Array;
+import java.math.BigInteger;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 
-import static android.Manifest.permission.ACCESS_FINE_LOCATION;
-import static android.Manifest.permission_group.CAMERA;
-import static android.content.pm.PackageManager.PERMISSION_GRANTED;
+public class MainActivity extends AppCompatActivity implements
+        GoogleApiClient.ConnectionCallbacks,
+        GoogleApiClient.OnConnectionFailedListener {
 
-public class MainActivity extends AppCompatActivity {
+    MessagesClient mMessagesClient;
+    MessageListener mMessageListener;
+    EddystoneUid eddystoneUid;
 
-    ListView listView;
+    private static final String MY_EDDYSTONE_UID_NAMESPACE = "edd1ebeac04e5defa017";
+    private static final String TAG = MainActivity.class.getName();
+    private static final int WRITE_PERMISSION_STATIC_CODE_IDENTIFIER = 1;
+
     TextView statusTextview;
-    TextView mTime;
-    Button searchBotton;
-
-    ArrayList<String> bluetoothDevices = new ArrayList<>();
-    ArrayList<String> BLEoutput = new ArrayList<>();
-
-    ArrayAdapter arrayAdapter;
-    BluetoothAdapter bluetoothAdapter;
-
-    public static final int PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION = 9003;
-    private boolean mLocationPermissionGranted = false;
+    Button mSubscribe;
+    Button mUnsubscribe;
+    Button mCapture;
 
     Date current;
     String time;
@@ -59,130 +62,136 @@ public class MainActivity extends AppCompatActivity {
     SimpleDateFormat formatter = new SimpleDateFormat("MM_dd_yyyy");
     String date = formatter.format(today);
 
-    private final String csvName = "BLE_scandata_" + date + ".csv";
-    private int clickIndex;
+    ListView listView;
+    ArrayList<String> BLEoutput = new ArrayList<>();
+    private ArrayAdapter<String> arrayAdapter;
 
-    private final BroadcastReceiver broadcastReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
 
-            current = Calendar.getInstance().getTime();
-            SimpleDateFormat formatter = new SimpleDateFormat("HH:mm:ss:SSS");
-            time = formatter.format(current);
+        statusTextview = findViewById(R.id.mStatusText);
+        mSubscribe = findViewById(R.id.mSubscribe);
+        mUnsubscribe = findViewById(R.id.mUnsubscribe);
+        mCapture = findViewById(R.id.mCapture);
+        listView = findViewById(R.id.mListView);
 
-            String action = intent.getAction();
+        statusTextview.setText("");
+        mUnsubscribe.setEnabled(false);
+        mCapture.setEnabled(false);
 
-            if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
-                statusTextview.setText("Finished");
-                searchBotton.setEnabled(true);
-                csvWriter();
-            } else if (BluetoothDevice.ACTION_FOUND.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                String name = device.getName();
-                String address = device.getAddress();
-                String rssi = Integer.toString(intent.getShortExtra(BluetoothDevice.EXTRA_RSSI, Short.MIN_VALUE));
+        getLocationPermission();
+        getDataWritingPermission();
 
-                if (!bluetoothDevices.contains(name) && !bluetoothDevices.contains(address)) {
+        arrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, BLEoutput);
 
-                    if (name == null || name.equals("")) {
-                        bluetoothDevices.add(address);
-                        BLEoutput.add(clickIndex + "," + date + "," + time + "," + address + ","+ rssi + " dBm");
-                    } else {
-                        bluetoothDevices.add(name);
-                        BLEoutput.add(clickIndex + "," + date + "," + time + "," + name + ","+ rssi + " dBm");
-                    }
-                }
-            }
-        }
-    };
-
-    public void csvWriter(){
-
-        FileOutputStream fos = null;
-
-        try {
-
-            fos = openFileOutput(csvName, Context.MODE_APPEND);
-
-            for (String bt_item: BLEoutput) {
-                fos.write((bt_item + "\n").getBytes());
-            }
-
-            fos.close();
-            Toast.makeText(this, "Scanned data has been saved to " + csvName + "!", Toast.LENGTH_LONG).show();
-
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            if (fos != null) {
-                try {
-                    fos.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-    }
-
-    public void searchClicked(View view){
-
-        clickIndex += 1;
-
-        bluetoothDevices.clear();
-        BLEoutput.clear();
-
-        mTime.setText(date + " " + time);
-        statusTextview.setText("Searching...");
-        searchBotton.setEnabled(false);
-        bluetoothAdapter.startDiscovery();
 
     }
 
     private void getLocationPermission() {
-
-        if (ContextCompat.checkSelfPermission(this.getApplicationContext(),
-                android.Manifest.permission.ACCESS_FINE_LOCATION)
-                == PackageManager.PERMISSION_GRANTED) {
-            mLocationPermissionGranted = true;
-        } else {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
-                    PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION);
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            mMessagesClient = Nearby.getMessagesClient(this, new MessagesOptions.Builder()
+                    .setPermissions(NearbyPermissions.BLE)
+                    .build());
         }
     }
 
+    private void getDataWritingPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE},
+                    WRITE_PERMISSION_STATIC_CODE_IDENTIFIER);
+        }
+    }
+
+    public void Subscribing(View view) {
+        statusTextview.setText("Subscribing...");
+        mSubscribe.setEnabled(false);
+        mUnsubscribe.setEnabled(true);
+        mCapture.setEnabled(true);
+
+        MessageFilter messageFilter = new MessageFilter.Builder()
+                .includeEddystoneUids(MY_EDDYSTONE_UID_NAMESPACE, null)
+                .build();
+
+        SubscribeOptions options = new SubscribeOptions.Builder()
+                .setStrategy(Strategy.BLE_ONLY)
+                .setFilter(messageFilter)
+                .build();
+
+        mMessageListener = new MessageListener() {
+            @Override
+            public void onFound(final Message message) {
+                if (Message.MESSAGE_NAMESPACE_RESERVED.equals(message.getNamespace())
+                        && Message.MESSAGE_TYPE_EDDYSTONE_UID.equals(message.getType())) {
+                    eddystoneUid = EddystoneUid.from(message);
+                }
+            }
+
+            @Override
+            public void onBleSignalChanged(final Message message, final BleSignal bleSignal) {
+                Log.i(TAG, "" + eddystoneUid.getInstance() + ":" + bleSignal);
+                BLEoutput.add(eddystoneUid.getInstance());
+                Log.i(TAG, "BLE_list size: " + BLEoutput.size());
+                Log.i(TAG, "adapter size: " + arrayAdapter.getCount());
+                listView.setAdapter(arrayAdapter);
+            }
+
+            @Override
+            public void onDistanceChanged(final Message message, final Distance distance) {
+                Log.i(TAG, "" + eddystoneUid.getInstance() + ":" + distance);
+                BLEoutput.add(eddystoneUid.getInstance());
+                Log.i(TAG, "BLE_list size: " + BLEoutput.size());
+                Log.i(TAG, "adapter size: " + arrayAdapter.getCount());
+                listView.setAdapter(arrayAdapter);
+            }
+
+            @Override
+            public void onLost(Message message) {
+                Log.i(TAG, "message lost");
+            }
+        };
+
+        Nearby.getMessagesClient(this).subscribe(mMessageListener, options);
+
+    }
+
+    public void Unsubscribing(View view) {
+        statusTextview.setText("Unsubscribed");
+        mUnsubscribe.setEnabled(false);
+        mSubscribe.setEnabled(true);
+        mCapture.setEnabled(false);
+        Nearby.getMessagesClient(this).unsubscribe(mMessageListener);
+    }
+
+    public void Capturing(View view) {
+    }
+
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    public void onStart() {
+        super.onStart();
+    }
 
-        clickIndex = 0;
-        bluetoothDevices.clear();
-        BLEoutput.clear();
+    @Override
+    public void onStop() {
+        super.onStop();
+    }
 
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
+    @Override
+    public void onConnected(@Nullable Bundle bundle) {
 
-        getLocationPermission();
+    }
 
-        listView = findViewById(R.id.listView);
-        statusTextview = findViewById(R.id.statusTextview);
-        searchBotton = findViewById(R.id.searchBotton);
-        mTime = findViewById(R.id.mTime);
+    @Override
+    public void onConnectionSuspended(int i) {
 
-        arrayAdapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, BLEoutput);
-        listView.setAdapter(arrayAdapter);
+    }
 
-        bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+    @Override
+    public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
 
-        IntentFilter intentFilter = new IntentFilter();
-        intentFilter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
-        intentFilter.addAction(BluetoothDevice.ACTION_FOUND);
-        intentFilter.addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED);
-        intentFilter.addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED);
-        registerReceiver(broadcastReceiver, intentFilter);
-
-        bluetoothAdapter.startDiscovery();
     }
 }
-
