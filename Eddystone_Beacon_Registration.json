@@ -1,0 +1,17 @@
+require 'base64'
+namespace = 'edd1ebeac04e5defa017'
+instance = '1a15b246a719'
+puts Base64.strict_encode64([namespace + instance].pack('H*'))
+
+{
+  "status": "ACTIVE",
+  "advertisedId": {
+    "type": "EDDYSTONE",
+    "id": ""
+  },
+  "expectedStability": "STABLE",
+  "indoorLevel": { "name": "" },
+  "latLng": { "latitude": "40.498658", "longitude": "-74.446701" },
+  "description": "RU Geology Museum",
+  "properties": {"color": "", "UID": ""}
+}
